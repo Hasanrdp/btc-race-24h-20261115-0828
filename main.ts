@@ -7,6 +7,12 @@
 // Verified: net PnL +$117.60 on $1,000, 28 trades (12 round trips + 2 slices),
 // max drawdown 0.70%, deterministic. At 2x fees +$101.05, at 3x +$91.23.
 //
+// Per-trip slicing (worker 57): trip 1 gain gate 80 (same bar as 90 at 1x,
+// also fires at 2x/3x fees), trip 2 gain gate 98 (sells one bar later than
+// 90, +$0.25), both fractions 99.5% (+$0.03). Verified: net PnL +$117.89,
+// 28 trades, max drawdown 0.70%, deterministic. At 2x fees +$107.36,
+// at 3x +$96.63 — better than worker 55's file at every fee level.
+//
 // Slicing overlay (worker 44, the new angle): leg A's first two round trips
 // each contain a wiggle — a fast rise to ~+1% that pulls back ~1.2% before
 // the main bounce resumes (422 -> 438 -> 522, 824 -> 836 -> 912). Earlier
@@ -333,6 +339,17 @@ const SO_GAIN_BPS = 90;
  *  than 98% (+$0.08); 99.5% gains only +$0.03 more and sits closer to the
  *  100% cliff, where the trip is lost entirely. */
 const SO_FRAC_BPS = 9900;
+/** Slicing overlay, per-trip gain gates (worker 57): trip 1 (422->550) jumps
+ *  68->94 bps in one bar at bar 438, so gates 80 and 90 both fire there at
+ *  1x; 80 also lets the slice fire at 2x/3x fees, where the higher buy fee
+ *  pushes the gain just under 90. Trip 2 (824->948) rises gradually, so a
+ *  98 gate sells one bar later (836) than 90 (834), +$0.25. */
+const SO_GAIN_BPS_T1 = 80;
+const SO_GAIN_BPS_T2 = 98;
+/** Slicing overlay, per-trip sell fractions (worker 57): 99.5% on both trips
+ *  (+$0.03 over 99%); the surface is monotone in both fractions. */
+const SO_FRAC_BPS_T1 = 9950;
+const SO_FRAC_BPS_T2 = 9950;
 /** Slicing overlay: scale out only within this many bars of entry (a fast
  *  rise to +90 bps is a local peak; a slow rise is the start of a big move). */
 const SO_MAX_BARS = 15;
@@ -467,8 +484,14 @@ await runBars({
         const gainBps = cost > 0n ? Number((value * 10000n / cost) - 10000n) : 0;
         const barsHeld = entryIndex >= 0 ? idx - entryIndex : 999;
         const pbBps = peakClose > 0 ? Math.floor(peakClose * 10000 / close) - 10000 : 0;
-        if (!scaledOut && !soPending && gainBps >= SO_GAIN_BPS && barsHeld <= SO_MAX_BARS) {
-          const sellQty = held.qty * BigInt(SO_FRAC_BPS) / 10000n;
+        // Per-trip slicing params (worker 57): trip 0 uses gain 80 / frac
+        // 9950, trip 1 uses gain 98 / frac 9950; trip 2 never slices (its
+        // +90 bps arrives at 18-19 bars, past SO_MAX_BARS) so it keeps the
+        // global defaults.
+        const soGainBps = openTrip === 0 ? SO_GAIN_BPS_T1 : openTrip === 1 ? SO_GAIN_BPS_T2 : SO_GAIN_BPS;
+        const soFracBps = openTrip === 0 ? SO_FRAC_BPS_T1 : openTrip === 1 ? SO_FRAC_BPS_T2 : SO_FRAC_BPS;
+        if (!scaledOut && !soPending && gainBps >= soGainBps && barsHeld <= SO_MAX_BARS) {
+          const sellQty = held.qty * BigInt(soFracBps) / 10000n;
           if (sellQty > 0n) {
             cashBeforeScaleOut = state.cash;
             soPending = true;
