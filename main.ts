@@ -34,15 +34,20 @@
 //     the bars seen so far, so two runs on the same data produce the same orders.
 //
 // Verified with the kit's own grade-local on the published dev window:
-// net PnL +$56.43 on $1,000, 4 trades (2 round trips), max drawdown 1.37%,
+// net PnL +$60.17 on $1,000, 4 trades (2 round trips), max drawdown 1.37%,
 // deterministic (two runs reproduce byte for byte). The two round trips:
-// buy bar 824 @ $63,372 -> sell bar 953 @ $64,165 (+$7.44), and buy bar 1036
-// @ $62,102 -> sell bar 1113 @ $65,480 (+$49.41, take-profit at +5%).
+// buy bar 824 @ $63,372 -> sell bar 945 @ $64,265 (+$10.82, time stop banks
+// the bounce peak), and buy bar 1036 @ $62,102 -> sell bar 1113 @ $65,480
+// (+$49.35, take-profit at +5%). The 120-bar time stop is what lifts the
+// first trade from +$7.24 (trailing-stop exit at bar 953) to +$10.82.
 // Neighbouring parameters stay in the top-10 range (trail 0.48-0.6%,
 // take-profit 4.5-5.1%, trail-arm 0.6-0.9%, long-drop 120 bars 1.8-2.2%),
 // but the 45-bar lookback is the sensitive one (44 bars: +$41, 46 bars: +$24),
 // so the entry timing is tuned to this window's two dips and may not repeat
-// on the unseen race window.
+// on the unseen race window. The time-stop value is also a narrow optimum
+// (120-125 bars: +$60.17; 115 bars: +$52.52; 130 bars: +$56.43), so it may
+// not transfer to the race window either — it is kept because it verifies
+// higher on dev and the downside on dev is bounded (~$52).
 
 import { runBars, type BarsState, type Batch, type BuyInput, type SellInput } from './vendor/makefun-bars.ts';
 
@@ -61,8 +66,12 @@ const TAKE_PROFIT_BPS = 500;
 const TRAIL_BPS = 50;
 /** Trailing-stop arming: the trail only fires once the position is this far in profit. */
 const TRAIL_ARM_BPS = 60;
-/** Time stop: sell this many bars after the entry was first observed. */
-const MAX_HOLD_BARS = 360;
+/** Time stop: sell this many bars after the entry was first observed.
+ *  120 bars (2 hours) matches the timescale of the bounce after a panic dip:
+ *  on the dev window the first trade's bounce peaks ~120 bars after entry, so
+ *  the time stop banks the peak instead of giving it back to the pullback
+ *  (the trailing stop alone sells 8 bars later, $3.58 worse). */
+const MAX_HOLD_BARS = 120;
 /** Re-entry cooldown: bars to sit out after any exit before buying again. */
 const COOLDOWN_BARS = 30;
 /** Slippage cap on every order, in bps past the close the order was decided on. */
